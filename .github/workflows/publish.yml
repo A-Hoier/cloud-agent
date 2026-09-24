@@ -28,6 +28,8 @@ jobs:
     if: github.event_name == 'push'
     needs: test
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     permissions:
       contents: read
       packages: write
@@ -49,6 +51,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
       - uses: docker/build-push-action@v6
+        id: build
         with:
           context: .
           push: true
@@ -57,3 +60,26 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && vars.AZURE_CLIENT_ID != ''
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy the published image digest
+        env:
+          IMAGE_DIGEST: ${{ needs.publish.outputs.digest }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          az extension add --name containerapp --upgrade --yes
+          image="ghcr.io/a-hoier/cloud-agent@${IMAGE_DIGEST}"
+          az containerapp update --name cloud-agent-web --resource-group "$AZURE_RESOURCE_GROUP" --image "$image"
+          az containerapp job update --name cloud-agent-worker --resource-group "$AZURE_RESOURCE_GROUP" --image "$image"

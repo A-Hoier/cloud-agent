@@ -28,6 +28,14 @@ To publish a release, update the version in `pyproject.toml` and `CHANGELOG.md`,
 then push an annotated matching tag such as `v0.1.0`. The workflow rejects a tag whose version
 does not match `pyproject.toml`.
 
+The optional `deploy` job updates an existing Container App named `cloud-agent-web` and an event
+job named `cloud-agent-worker` after a successful `main` image build. It deploys the immutable
+published image digest, so the app can develop itself after a reviewed change merges. Configure
+repository Actions variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, and
+`AZURE_RESOURCE_GROUP` to enable it. The Azure identity must trust the repository's `main` branch
+through GitHub OIDC and have Container Apps Contributor on only those two resources. Without
+these variables, the Azure deployment step is skipped.
+
 ## What you need
 
 - An Azure Storage account with queue `cloud-agent-tasks` and Blob container `cloud-agent`.
