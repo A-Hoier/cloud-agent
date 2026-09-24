@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from .config import Settings
-from .models import CodingTask
+from .models import CodingTask, RepositoryRecord
 from .repository_registry import RepositoryNotRegisteredError, RepositoryRegistry
 from .session import SessionConflictError, SessionStore
 from .status import TaskStatusStore
@@ -27,11 +27,13 @@ class TaskRequest(BaseModel):
     instruction: Annotated[str, Field(min_length=1, max_length=20_000)]
     target_branch: Annotated[str | None, Field(max_length=200)] = None
     merge_when_ready: bool = False
+    direct_to_main: bool = False
 
 
 class SessionRequest(BaseModel):
     repository: Annotated[str, Field(min_length=1, max_length=200)]
     target_branch: Annotated[str | None, Field(max_length=200)] = None
+    direct_to_main: bool = False
 
 
 class MessageRequest(BaseModel):
@@ -122,6 +124,8 @@ def create_task(request: TaskRequest, owner_id: str = Depends(_require_owner)) -
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if request.merge_when_ready and not repository.repo_url.startswith("https://github.com/"):
         raise HTTPException(status_code=400, detail="auto merge is available only for GitHub repositories")
+    if request.direct_to_main:
+        _validate_direct_to_main(repository, request.target_branch, request.merge_when_ready)
     if not request.instruction.strip():
         raise HTTPException(status_code=400, detail="instruction cannot be blank")
     if len(request.instruction.encode("utf-8")) > 48_000:
@@ -134,6 +138,7 @@ def create_task(request: TaskRequest, owner_id: str = Depends(_require_owner)) -
         created_at=datetime.now(UTC),
         target_branch=request.target_branch.strip() if request.target_branch else None,
         merge_when_ready=request.merge_when_ready,
+        direct_to_main=request.direct_to_main,
         owner_id=owner_id,
     )
     app.state.status_store.write(task.task_id, repository=task.repository, owner_id=owner_id, state="queued")
@@ -147,6 +152,7 @@ def create_task(request: TaskRequest, owner_id: str = Depends(_require_owner)) -
                     "created_at": task.created_at.isoformat(),
                     "target_branch": task.target_branch,
                     "merge_when_ready": task.merge_when_ready,
+                    "direct_to_main": task.direct_to_main,
                     "owner_id": owner_id,
                 },
                 ensure_ascii=False,
@@ -174,9 +180,12 @@ def create_session(request: SessionRequest, owner_id: str = Depends(_require_own
         repository = app.state.registry.resolve(request.repository)
     except RepositoryNotRegisteredError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if request.direct_to_main:
+        _validate_direct_to_main(repository, request.target_branch or repository.default_branch, False)
     return app.state.session_store.create(
         repository.key, request.target_branch.strip() if request.target_branch else repository.default_branch,
         owner_id=owner_id,
+        direct_to_main=request.direct_to_main,
     )
 
 
@@ -221,6 +230,7 @@ def send_session_message(
                     "created_at": task.created_at.isoformat(),
                     "target_branch": task.target_branch,
                     "merge_when_ready": False,
+                    "direct_to_main": task.direct_to_main,
                     "owner_id": owner_id,
                 },
                 ensure_ascii=False,
@@ -233,6 +243,17 @@ def send_session_message(
         )
         raise HTTPException(status_code=503, detail="could not queue message") from exc
     return {"session_id": session_id, "task_id": task.task_id, "status": "queued"}
+
+
+def _validate_direct_to_main(
+    repository: RepositoryRecord, target_branch: str | None, merge_when_ready: bool
+) -> None:
+    if not repository.repo_url.startswith("https://github.com/"):
+        raise HTTPException(status_code=400, detail="direct-to-main is available only for GitHub repositories")
+    if (target_branch or repository.default_branch).strip() != "main":
+        raise HTTPException(status_code=400, detail="direct-to-main requires the main base branch")
+    if merge_when_ready:
+        raise HTTPException(status_code=400, detail="direct-to-main cannot be combined with auto merge")
 
 
 _INDEX_HTML = """<!doctype html>
@@ -251,6 +272,7 @@ _INDEX_HTML = """<!doctype html>
     label { display: block; margin: 20px 0 8px; font-weight: 650; }
     select, textarea, input { box-sizing: border-box; width: 100%; border: 1px solid #3a4967;
       border-radius: 9px; background: #0c1428; color: inherit; padding: 12px; font: inherit; }
+    input[type=checkbox] { width: auto; margin-right: 8px; }
     textarea { min-height: 220px; resize: vertical; }
     button { margin-top: 20px; border: 0; border-radius: 9px; padding: 12px 18px;
       background: #6d7cff; color: white; font: inherit; font-weight: 700; cursor: pointer; }
@@ -266,11 +288,12 @@ _INDEX_HTML = """<!doctype html>
 <body><main><div class="card">
   <h1>Coding sessions</h1>
   <p>Each message runs in a fresh, isolated job. The conversation is saved, and code changes stay
-  on this session's Git branch, so you can continue after the job exits.</p>
+  on this session's Git branch, or go directly to main if you explicitly choose that mode.</p>
   <label for="sessions">Session</label><select id="sessions"></select>
   <label for="repository">Repository for a new session</label><select id="repository" required></select>
   <label for="branch">Base branch for a new session <small>(optional)</small></label>
   <input id="branch" placeholder="Uses the repository default">
+  <label><input id="direct-to-main" type="checkbox"> Commit directly to main (no pull request)</label>
   <button id="new-session" type="button">Start new session</button>
   <div id="session-status"></div>
   <div id="chat"></div>
@@ -340,7 +363,8 @@ async function refreshSession() {
   sessionStatus.replaceChildren();
   const label = document.createElement('p');
   label.textContent = `${session.repository} · ${session.state}` +
-    (session.branch ? ` · ${session.branch}` : '');
+    (session.branch ? ` · ${session.branch}` : '') +
+    (session.direct_to_main ? ' · direct to main' : '');
   sessionStatus.appendChild(label);
   if (session.pull_request_url?.startsWith('https://github.com/')) {
     const anchor = document.createElement('a');
@@ -363,7 +387,8 @@ document.querySelector('#new-session').addEventListener('click', async () => {
   const response = await fetch('/api/sessions', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({repository: repos.value,
-      target_branch: document.querySelector('#branch').value || null})});
+      target_branch: document.querySelector('#branch').value || null,
+      direct_to_main: document.querySelector('#direct-to-main').checked})});
   const body = await response.json();
   if (!response.ok) { showMessage(body.detail || 'Could not start session'); return; }
   rememberSession(body.session_id);

@@ -102,6 +102,19 @@ def test_only_one_active_turn_per_session(store: SessionStore):
     assert store.queue_turn(session_id, "Try again").instruction == "Try again"
 
 
+def test_direct_to_main_mode_is_immutable_and_checked_for_queued_turns(store: SessionStore):
+    session_id = store.create("api", "main", owner_id="alice", direct_to_main=True)["session_id"]
+    task = store.queue_turn(session_id, "Ship it", owner_id="alice")
+    assert task.direct_to_main is True
+    assert store.start_turn(task) == []
+    altered = CodingTask(
+        task.task_id, task.repository, task.instruction, task.created_at,
+        target_branch="main", session_id=session_id, owner_id="alice", direct_to_main=False,
+    )
+    with pytest.raises(SessionConflictError, match="delivery mode"):
+        store.start_turn(altered)
+
+
 def test_owner_scoped_sessions_are_discoverable_and_private(store: SessionStore):
     alice_id = store.create("api", "main", owner_id="alice")["session_id"]
     store.create("api", "main", owner_id="bob")

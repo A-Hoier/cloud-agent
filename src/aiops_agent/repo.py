@@ -65,6 +65,15 @@ class GitRepository:
         message = self._git("log", "-1", "--format=%B").stdout
         return f"Task: {task_id}" in message.splitlines()
 
+    def recent_task_commit_summary(self, task_id: str) -> str | None:
+        """Find a direct-to-main commit even if other commits landed before a queue retry."""
+        messages = self._git("log", "-50", "--format=%B%x00").stdout.split("\x00")
+        for message in messages:
+            if f"Task: {task_id}" in message.splitlines():
+                sections = message.strip().split("\n\n", 2)
+                return sections[2].strip() if len(sections) == 3 else "Existing task commit reused"
+        return None
+
     def task_commit_summary(self) -> str:
         """Recover the agent's report from the commit body after a push/PR retry."""
         message = self._git("log", "-1", "--format=%B").stdout

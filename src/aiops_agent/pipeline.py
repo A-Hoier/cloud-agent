@@ -32,6 +32,10 @@ class CodingPipeline:
         if task.merge_when_ready and not is_github:
             raise ValueError("auto merge is available only for GitHub repositories")
         base_branch = task.target_branch or repository.default_branch
+        if task.direct_to_main:
+            if not is_github or base_branch != "main" or task.merge_when_ready:
+                raise ValueError("direct-to-main requires a GitHub repository on main without auto merge")
+            return self._handle_direct_to_main(task, repository, history)
         log.info(
             "repository_resolved",
             task_id=task.task_id,
@@ -71,6 +75,24 @@ class CodingPipeline:
         if pushed:
             return self._result_after_push(task, repository, base_branch, branch, changed, summary)
         return TaskResult(task.task_id, branch, False, changed, summary)
+
+    def _handle_direct_to_main(
+        self, task: CodingTask, repository: RepositoryRecord, history: list[dict[str, str]] | None
+    ) -> TaskResult:
+        repo = self._workspace.clone(repository.repo_url, "main")
+        prior_summary = repo.recent_task_commit_summary(task.task_id)
+        if prior_summary is not None:
+            log.info("task_commit_reused", task_id=task.task_id, branch="main")
+            return TaskResult(task.task_id, "main", True, [], prior_summary)
+        summary = self._harness.run(repo.path, task, repository, history)
+        repo.assert_checkout_intact()
+        changed = repo.changed_files()
+        if not changed:
+            log.warning("no_changes_proposed", task_id=task.task_id, repository=repository.key)
+            return TaskResult(task.task_id, "main", False, [], summary)
+        pushed = repo.commit_and_push("main", _commit_message(task, repository, summary), self._settings)
+        log.info("task_prepared", task_id=task.task_id, branch="main", pushed=pushed, files=changed)
+        return TaskResult(task.task_id, "main", pushed, changed, summary)
 
     def _result_after_push(
         self,

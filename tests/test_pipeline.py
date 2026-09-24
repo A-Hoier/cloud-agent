@@ -90,6 +90,9 @@ class ChangingRepo(FakeRepo):
         assert f"Task: {self.expected_task_id}" in message
         return True
 
+    def recent_task_commit_summary(self, task_id: str) -> str | None:
+        return "Already delivered" if self.committed else None
+
 
 class SessionWorkspace:
     def __init__(self) -> None:
@@ -162,3 +165,40 @@ def test_followup_turn_reuses_session_branch_and_prior_context():
     replay = pipeline.handle(second)
     assert replay.harness_summary == "Recovered the previous answer"
     assert len(pipeline._harness.histories) == 2
+
+
+def test_direct_to_main_pushes_without_feature_branch_or_pull_request():
+    settings = Settings.from_env({
+        "QUEUE_ACCOUNT_URL": "https://example.queue.core.windows.net",
+        "GITHUB_REPOSITORIES": "acme/api",
+        "TASK_STATUS_CONTAINER_URL": "https://example.blob.core.windows.net/status",
+    })
+    repository = RepositoryRecord("api", "API", "https://github.com/acme/api.git")
+    pipeline = CodingPipeline.__new__(CodingPipeline)
+    pipeline._settings = settings
+    pipeline._registry = RepositoryRegistry({"api": repository})
+    pipeline._workspace = SessionWorkspace()
+    pipeline._harness = RecordingHarness()
+    task = CodingTask("240cb99a-0287-4fa1-a296-d976dd0c24bc", "api", "Do it", datetime.now(UTC),
+                      direct_to_main=True)
+    original_clone = pipeline._workspace.clone
+    already_delivered = False
+
+    def clone_with_task(repo_url, base_branch):
+        checkout = original_clone(repo_url, base_branch)
+        checkout.expected_task_id = task.task_id
+        checkout.committed = already_delivered
+        return checkout
+
+    pipeline._workspace.clone = clone_with_task
+    result = pipeline.handle(task)
+    assert result.branch == "main"
+    assert result.pushed is True
+    assert result.pull_request_url is None
+    assert pipeline._workspace.cloned_branches == ["main"]
+    assert not pipeline._workspace.repos[0].branch_created
+
+    already_delivered = True
+    replay = pipeline.handle(task)
+    assert replay.harness_summary == "Already delivered"
+    assert len(pipeline._harness.histories) == 1

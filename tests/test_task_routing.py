@@ -38,6 +38,7 @@ def test_parse_coding_task():
         '{"repository":"repo"}',
         '{"repository":"repo","instruction":"Do it","created_at":"tomorrow"}',
         '{"repository":"repo","instruction":"Do it","merge_when_ready":"yes"}',
+        '{"repository":"repo","instruction":"Do it","direct_to_main":"yes"}',
     ],
 )
 def test_parse_rejects_bad_payloads(body):

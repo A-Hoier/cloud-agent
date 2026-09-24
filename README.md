@@ -3,10 +3,11 @@
 Cloud Agent is a self-hosted coding workspace for GitHub repositories. Run the same image as an
 Azure Container App (web UI) and an event-driven Container Apps Job (worker). A signed-in user
 selects an allow-listed repository, opens a session, and sends a coding request. Each turn runs in
-one disposable job with a fresh clone; its conversation is kept in Azure Blob Storage and its code
-is kept on a session-specific Git branch and pull request. Later turns recover both.
+one disposable job with a fresh clone; its conversation is kept in Azure Blob Storage. Code goes
+to a session-specific Git branch and pull request by default, or directly to `main` when a trusted
+user explicitly selects that mode. Later turns recover the conversation and latest code.
 
-The default coding harness calls **only the HTTPS chat-completions endpoint you configure**. It
+The default coding harness calls **only the HTTPS Responses or Chat Completions endpoint you configure**. It
 uses a self-hosted model or Microsoft Foundry deployment, never DeepSeek's hosted API. The harness
 can inspect, search, edit, delete files, and run allow-listed validation commands. An optional
 Copilot CLI adapter remains available through the common `CodingHarness` interface. You can also
@@ -45,7 +46,7 @@ Contributor on the worker job. Without these variables, the Azure deployment ste
   Data Reader** (for scaling), and **Storage Blob Data Contributor**.
 - An allow-list of GitHub repositories, a fine-grained PAT with **Contents: read/write** and
   **Pull requests: read/write** on those repositories, and a self-hosted model endpoint that
-  supports OpenAI-style chat completions with tool calls.
+  supports OpenAI-style Responses or Chat Completions with tool calls.
 - Microsoft Entra authentication on the web Container App, configured to **require sign-in** for
   all requests. Cloud Agent uses ACA's trusted `X-MS-CLIENT-PRINCIPAL-ID` header to bind sessions
   and task results to their creator. Do not put the web image behind another proxy that allows
@@ -105,6 +106,13 @@ allow-list with `REPOSITORY_REGISTRY_PATH` or `REPOSITORY_REGISTRY_BLOB_URL` ins
 entry uses `main` as its base branch unless it has an `@branch` suffix; the user can also select a different branch when opening a
 session. The frontend never accepts arbitrary clone URLs.
 
+By default, a coding turn pushes to a session branch and opens a pull request. For a trusted
+GitHub repository whose selected base branch is `main`, choose **Commit directly to main** when
+creating a session, or send `direct_to_main: true` to `POST /api/tasks`. This mode is explicit,
+fixed for the session, and incompatible with auto-merge. The application commits and performs a
+normal fast-forward push; the model never receives Git write tools. Branch protection can reject
+the push, and concurrent updates are never force-pushed.
+
 Optional settings: `PUSH_ENABLED=false` for a trial without remote writes;
 `HARNESS_PROVIDER=dsh` for the upstream headless CLI (Bearer model auth only), or
 `HARNESS_PROVIDER=copilot` and a separate `GH_TOKEN` for Copilot CLI;
@@ -121,7 +129,7 @@ and use ACA secret references for the PAT and optional model key:
 ```bash
 az containerapp create \
   --name cloud-agent-web --resource-group <rg> --environment <environment> \
-  --image ghcr.io/a-hoier/cloud-agent:0.1.1 \
+  --image ghcr.io/a-hoier/cloud-agent:0.1.3 \
   --user-assigned <identity-resource-id> \
   --ingress external --target-port 8000 --command cloud-agent-web \
   --env-vars AZURE_STORAGE_ACCOUNT_NAME=<account> AZURE_CLIENT_ID=<identity-client-id> \
@@ -136,7 +144,7 @@ this setting. Restrict which users can sign in through your Entra app assignment
 ```bash
 az containerapp job create \
   --name cloud-agent-worker --resource-group <rg> --environment <environment> \
-  --image ghcr.io/a-hoier/cloud-agent:0.1.1 \
+  --image ghcr.io/a-hoier/cloud-agent:0.1.3 \
   --mi-user-assigned <identity-resource-id> \
   --trigger-type Event --replica-timeout 1800 --replica-retry-limit 0 \
   --parallelism 1 --min-executions 0 --max-executions 5 --polling-interval 30 \
@@ -145,8 +153,8 @@ az containerapp job create \
   --scale-rule-identity <identity-resource-id> \
   --cpu 2 --memory 4Gi --command cloud-agent-worker \
   --env-vars AZURE_STORAGE_ACCOUNT_NAME=<account> AZURE_CLIENT_ID=<identity-client-id> \
-    GITHUB_REPOSITORIES=acme/api,acme/web MODEL_ENDPOINT=<chat-completions-url> \
-    MODEL_NAME=<deployment-id> GITHUB_PAT=secretref:github-pat
+    GITHUB_REPOSITORIES=acme/api,acme/web MODEL_ENDPOINT=<responses-or-chat-url> \
+    MODEL_NAME=<deployment-id> MODEL_REASONING_EFFORT=medium GITHUB_PAT=secretref:github-pat
 ```
 
 Add `MODEL_API_KEY=secretref:model-api-key` only when needed. Keep the queue visibility timeout

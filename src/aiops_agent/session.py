@@ -30,7 +30,8 @@ class SessionStore:
         self._client = ContainerClient.from_container_url(container_url, credential=credential)
 
     def create(
-        self, repository: str, target_branch: str | None = None, owner_id: str | None = None
+        self, repository: str, target_branch: str | None = None, owner_id: str | None = None,
+        direct_to_main: bool = False,
     ) -> dict[str, Any]:
         now = _now()
         session = {
@@ -38,6 +39,7 @@ class SessionStore:
             "repository": repository,
             "owner_id": owner_id,
             "target_branch": target_branch,
+            "direct_to_main": direct_to_main,
             "created_at": now,
             "updated_at": now,
             "state": "idle",
@@ -113,6 +115,7 @@ class SessionStore:
             instruction=instruction,
             created_at=created_at,
             target_branch=session["target_branch"],
+            direct_to_main=session.get("direct_to_main", False),
             owner_id=session.get("owner_id"),
         )
 
@@ -126,6 +129,8 @@ class SessionStore:
                 raise SessionConflictError("task does not match its session owner")
             if session["repository"] != task.repository or session["target_branch"] != task.target_branch:
                 raise SessionConflictError("task does not match its session repository and base branch")
+            if session.get("direct_to_main", False) != task.direct_to_main:
+                raise SessionConflictError("task does not match its session delivery mode")
             matching_message = next(
                 (item for item in session["messages"] if item["task_id"] == task.task_id), None
             )

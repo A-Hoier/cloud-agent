@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3 — 2026-09-24
+
+Added an explicit direct-to-main delivery mode for GitHub sessions and API tasks. The application
+performs a normal push after checking the agent's changes; the model still cannot run Git writes.
+The default remains a feature branch and pull request.
+
 ## 0.1.2 — 2026-09-24
 
 Added Responses API support to the built-in coding harness, including medium reasoning and

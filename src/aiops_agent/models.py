@@ -23,6 +23,7 @@ class CodingTask:
     created_at: datetime
     target_branch: str | None = None
     merge_when_ready: bool = False
+    direct_to_main: bool = False
     session_id: str | None = None
     owner_id: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
@@ -84,6 +85,11 @@ class CodingTask:
         merge_when_ready = payload.get("merge_when_ready", False)
         if not isinstance(merge_when_ready, bool):
             raise MessageFormatError("merge_when_ready must be a boolean")
+        direct_to_main = payload.get("direct_to_main", False)
+        if not isinstance(direct_to_main, bool):
+            raise MessageFormatError("direct_to_main must be a boolean")
+        if direct_to_main and merge_when_ready:
+            raise MessageFormatError("direct_to_main and merge_when_ready cannot both be enabled")
         target_branch = payload.get("target_branch")
         if target_branch is not None and (
             not isinstance(target_branch, str) or not target_branch.strip() or len(target_branch) > 200
@@ -97,6 +103,7 @@ class CodingTask:
             created_at=created_at,
             target_branch=target_branch.strip() if target_branch else None,
             merge_when_ready=merge_when_ready,
+            direct_to_main=direct_to_main,
             session_id=session_id,
             owner_id=owner_id,
             raw=payload,

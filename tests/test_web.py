@@ -44,12 +44,15 @@ class FakeSessionStore:
     def __init__(self) -> None:
         self.sessions: dict[str, dict[str, object]] = {}
 
-    def create(self, repository: str, target_branch: str | None, owner_id: str) -> dict[str, object]:
+    def create(
+        self, repository: str, target_branch: str | None, owner_id: str, direct_to_main: bool = False
+    ) -> dict[str, object]:
         session = {
             "session_id": str(uuid4()),
             "repository": repository,
             "owner_id": owner_id,
             "target_branch": target_branch,
+            "direct_to_main": direct_to_main,
             "messages": [],
             "active_task_id": None,
             "state": "idle",
@@ -81,6 +84,7 @@ class FakeSessionStore:
             instruction,
             datetime.now(UTC),
             target_branch=session["target_branch"],
+            direct_to_main=session["direct_to_main"],
             session_id=session_id,
             owner_id=owner_id,
         )
@@ -140,6 +144,33 @@ def test_frontend_queues_auto_merge_choice():
     queue = _configure_app()
     create_task(TaskRequest(repository="api", instruction="Add a health endpoint", merge_when_ready=True), "user-a")
     assert json.loads(queue.messages[0])["merge_when_ready"] is True
+
+
+def test_frontend_queues_explicit_direct_to_main_choice():
+    queue = _configure_app()
+    client = TestClient(app, headers={"x-ms-client-principal-id": "user-a"})
+    created = client.post("/api/sessions", json={"repository": "api", "direct_to_main": True})
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+    assert created.json()["direct_to_main"] is True
+    sent = client.post(f"/api/sessions/{session_id}/messages", json={"instruction": "Do it"})
+    assert sent.status_code == 202
+    assert json.loads(queue.messages[0])["direct_to_main"] is True
+    assert client.post("/api/tasks", json={
+        "repository": "api", "instruction": "Do it", "direct_to_main": True,
+    }).status_code == 202
+    assert json.loads(queue.messages[1])["direct_to_main"] is True
+
+
+def test_direct_to_main_rejects_non_main_and_auto_merge():
+    _configure_app()
+    client = TestClient(app, headers={"x-ms-client-principal-id": "user-a"})
+    assert client.post("/api/sessions", json={
+        "repository": "api", "target_branch": "develop", "direct_to_main": True,
+    }).status_code == 400
+    assert client.post("/api/tasks", json={
+        "repository": "api", "instruction": "Do it", "direct_to_main": True, "merge_when_ready": True,
+    }).status_code == 400
 
 
 def test_http_task_roundtrip():
