@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: cloud-agent-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -81,5 +85,5 @@ jobs:
         run: |
           az extension add --name containerapp --upgrade --yes
           image="ghcr.io/a-hoier/cloud-agent@${IMAGE_DIGEST}"
-          az containerapp update --name cloud-agent-web --resource-group "$AZURE_RESOURCE_GROUP" --image "$image"
-          az containerapp job update --name cloud-agent-worker --resource-group "$AZURE_RESOURCE_GROUP" --image "$image"
+          az containerapp update --name cloud-agent-web --resource-group "$AZURE_RESOURCE_GROUP" --image "$image" --output none
+          az containerapp job update --name cloud-agent-worker --resource-group "$AZURE_RESOURCE_GROUP" --image "$image" --output none

@@ -33,8 +33,8 @@ job named `cloud-agent-worker` after a successful `main` image build. It deploys
 published image digest, so the app can develop itself after a reviewed change merges. Configure
 repository Actions variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, and
 `AZURE_RESOURCE_GROUP` to enable it. The Azure identity must trust the repository's `main` branch
-through GitHub OIDC and have Container Apps Contributor on only those two resources. Without
-these variables, the Azure deployment step is skipped.
+through GitHub OIDC and have Container Apps Contributor on the web app plus Container Apps Jobs
+Contributor on the worker job. Without these variables, the Azure deployment step is skipped.
 
 ## What you need
 
