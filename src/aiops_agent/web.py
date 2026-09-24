@@ -262,31 +262,51 @@ _INDEX_HTML = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Coding Agent</title>
+  <script>
+    try {
+      if (localStorage.getItem('theme') === 'light') document.documentElement.dataset.theme = 'light';
+    } catch (error) { /* Storage may be unavailable; keep the default dark theme. */ }
+  </script>
   <style>
-    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; }
-    body { margin: 0; background: #0b1020; color: #e8edf8; }
+    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif;
+      --page: #0b1020; --text: #e8edf8; --card: #131b31; --border: #263452;
+      --muted: #aebbd3; --field-border: #3a4967; --surface: #0c1428;
+      --accent: #6d7cff; --accent-text: #fff; --user: #6d7cff;
+      --assistant: #3bbf9b; --code: #b9c2ff; }
+    :root[data-theme="light"] { color-scheme: light;
+      --page: #f4f6fb; --text: #19253b; --card: #fff; --border: #cbd4e3;
+      --muted: #44536a; --field-border: #8998ae; --surface: #f0f3f9;
+      --accent: #3446b9; --accent-text: #fff; --user: #3446b9;
+      --assistant: #17765b; --code: #3446b9; }
+    body { margin: 0; background: var(--page); color: var(--text); }
     main { max-width: 760px; margin: 8vh auto; padding: 0 24px; }
-    .card { background: #131b31; border: 1px solid #263452; border-radius: 16px; padding: 28px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 28px; }
+    .card-heading { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 16px; }
     h1 { margin-top: 0; font-size: 30px; }
-    p { color: #aebbd3; line-height: 1.55; }
+    p { color: var(--muted); line-height: 1.55; }
     label { display: block; margin: 20px 0 8px; font-weight: 650; }
-    select, textarea, input { box-sizing: border-box; width: 100%; border: 1px solid #3a4967;
-      border-radius: 9px; background: #0c1428; color: inherit; padding: 12px; font: inherit; }
+    select, textarea, input { box-sizing: border-box; width: 100%; border: 1px solid var(--field-border);
+      border-radius: 9px; background: var(--surface); color: inherit; padding: 12px; font: inherit; }
     input[type=checkbox] { width: auto; margin-right: 8px; }
     textarea { min-height: 220px; resize: vertical; }
     button { margin-top: 20px; border: 0; border-radius: 9px; padding: 12px 18px;
-      background: #6d7cff; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+      background: var(--accent); color: var(--accent-text); font: inherit; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .55; cursor: wait; }
-    #result { margin-top: 18px; padding: 12px; border-radius: 9px; background: #0c1428; display: none; }
+    #theme-toggle { margin-top: 0; background: var(--surface); color: var(--text);
+      border: 1px solid var(--field-border); white-space: nowrap; }
+    #result { margin-top: 18px; padding: 12px; border-radius: 9px; background: var(--surface); display: none; }
     #chat { margin-top: 20px; display: grid; gap: 12px; }
-    .message { white-space: pre-wrap; background: #0c1428; padding: 14px; border-radius: 9px; }
-    .message.user { border-left: 3px solid #6d7cff; }
-    .message.assistant { border-left: 3px solid #3bbf9b; }
-    code { color: #b9c2ff; }
+    .message { white-space: pre-wrap; background: var(--surface); padding: 14px; border-radius: 9px; }
+    .message.user { border-left: 3px solid var(--user); }
+    .message.assistant { border-left: 3px solid var(--assistant); }
+    code { color: var(--code); }
   </style>
 </head>
 <body><main><div class="card">
-  <h1>Coding sessions</h1>
+  <div class="card-heading">
+    <h1>Coding sessions</h1>
+    <button type="button" id="theme-toggle" aria-label="Switch to light theme">Light theme</button>
+  </div>
   <p>Each message runs in a fresh, isolated job. The conversation is saved, and code changes stay
   on this session's Git branch, or go directly to main if you explicitly choose that mode.</p>
   <label for="sessions">Session</label><select id="sessions"></select>
@@ -306,6 +326,20 @@ _INDEX_HTML = """<!doctype html>
   <div id="result"></div>
 </div></main>
 <script>
+const themeToggle = document.querySelector('#theme-toggle');
+function updateThemeToggle() {
+  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  themeToggle.textContent = `${next[0].toUpperCase()}${next.slice(1)} theme`;
+  themeToggle.setAttribute('aria-label', `Switch to ${next} theme`);
+}
+updateThemeToggle();
+themeToggle.addEventListener('click', () => {
+  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  if (next === 'dark') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = 'light';
+  try { localStorage.setItem('theme', next); } catch (error) { /* Keep the in-page choice. */ }
+  updateThemeToggle();
+});
 const form = document.querySelector('#message-form');
 const repos = document.querySelector('#repository');
 const sessions = document.querySelector('#sessions');
