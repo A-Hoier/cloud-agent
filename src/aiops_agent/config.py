@@ -44,6 +44,7 @@ class Settings:
     model_name: str | None
     model_auth_mode: str
     model_token_scope: str
+    model_reasoning_effort: str | None
     deepseek_max_steps: int
     deepseek_timeout_seconds: int
 
@@ -101,6 +102,7 @@ class Settings:
             model_name=e.get("MODEL_NAME") or None,
             model_auth_mode=e.get("MODEL_AUTH_MODE", "auto").strip().lower(),
             model_token_scope=e.get("MODEL_TOKEN_SCOPE", "auto"),
+            model_reasoning_effort=e.get("MODEL_REASONING_EFFORT", "").strip().lower() or None,
             deepseek_max_steps=_int(e, "DEEPSEEK_MAX_STEPS", 40),
             deepseek_timeout_seconds=_int(e, "DEEPSEEK_TIMEOUT_SECONDS", 1200),
             workdir=e.get("WORKDIR", "/tmp/coding-agent"),

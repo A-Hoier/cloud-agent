@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 — 2026-09-24
+
+Validated the first Azure Container Apps deployment, added secretless GitHub OIDC rollout of the
+published image digest, and made chat-completions reasoning effort configurable for models that
+require `reasoning_effort=none` when using function tools.
+
 ## 0.1.0 — 2026-09-24
 
 Initial public preview. Includes authenticated multi-repository sessions, isolated one-turn

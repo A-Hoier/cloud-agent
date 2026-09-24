@@ -147,7 +147,21 @@ def test_deepseek_request_keeps_key_in_header_and_uses_tool_schema(monkeypatch):
     assert request.get_header("Authorization") == "Bearer private-key"
     body = json.loads(request.data)
     assert body["model"] == "my-deepseek-model"
+    assert "reasoning_effort" not in body
     assert any(tool["function"]["name"] == "replace_text" for tool in body["tools"])
+
+
+def test_model_reasoning_effort_is_sent_when_configured(monkeypatch):
+    harness = DeepSeekHarness(_settings(MODEL_REASONING_EFFORT="none"))
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data)
+        return BytesIO(b'{"choices":[{"message":{"role":"assistant","content":"Done"}}]}')
+
+    monkeypatch.setattr(deepseek_harness, "urlopen", fake_urlopen)
+    harness._request([{"role": "user", "content": "Use a tool"}], 10)
+    assert captured["body"]["reasoning_effort"] == "none"
 
 
 def test_self_hosted_endpoint_can_use_api_key_header(monkeypatch):

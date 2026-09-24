@@ -91,6 +91,11 @@ is `https://ai.azure.com/.default` for a Foundry project endpoint and
 or GitHub PAT. Store secrets as ACA secrets and reference them by name, not literal command-line
 values.
 
+For models that require an explicit reasoning mode with function tools, set
+`MODEL_REASONING_EFFORT=none` (or another value supported by that model). The built-in harness
+forwards this field only when configured; it is omitted by default for endpoints that do not
+recognize it.
+
 For customized repository names, default branches, source paths, or guidance, provide a JSON
 allow-list with `REPOSITORY_REGISTRY_PATH` or `REPOSITORY_REGISTRY_BLOB_URL` instead of
 `GITHUB_REPOSITORIES`. See [the example](config/repositories.json). A plain `GITHUB_REPOSITORIES`
@@ -113,7 +118,7 @@ and use ACA secret references for the PAT and optional model key:
 ```bash
 az containerapp create \
   --name cloud-agent-web --resource-group <rg> --environment <environment> \
-  --image ghcr.io/a-hoier/cloud-agent:0.1.0 \
+  --image ghcr.io/a-hoier/cloud-agent:0.1.1 \
   --user-assigned <identity-resource-id> \
   --ingress external --target-port 8000 --command cloud-agent-web \
   --env-vars AZURE_STORAGE_ACCOUNT_NAME=<account> AZURE_CLIENT_ID=<identity-client-id> \
@@ -128,7 +133,7 @@ this setting. Restrict which users can sign in through your Entra app assignment
 ```bash
 az containerapp job create \
   --name cloud-agent-worker --resource-group <rg> --environment <environment> \
-  --image ghcr.io/a-hoier/cloud-agent:0.1.0 \
+  --image ghcr.io/a-hoier/cloud-agent:0.1.1 \
   --mi-user-assigned <identity-resource-id> \
   --trigger-type Event --replica-timeout 1800 --replica-retry-limit 0 \
   --parallelism 1 --min-executions 0 --max-executions 5 --polling-interval 30 \

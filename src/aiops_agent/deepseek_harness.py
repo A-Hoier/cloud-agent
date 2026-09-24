@@ -224,10 +224,14 @@ class DeepSeekHarness(CodingHarness):
         raise HarnessError(f"DeepSeek harness exceeded {self._settings.deepseek_max_steps} steps")
 
     def _request(self, messages: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
-        payload = json.dumps(
-            {"model": self._settings.model_name, "messages": messages, "tools": _TOOLS},
-            ensure_ascii=False,
-        ).encode("utf-8")
+        request_body: dict[str, Any] = {
+            "model": self._settings.model_name,
+            "messages": messages,
+            "tools": _TOOLS,
+        }
+        if self._settings.model_reasoning_effort:
+            request_body["reasoning_effort"] = self._settings.model_reasoning_effort
+        payload = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
         if self._settings.model_api_key:
             key_header = self._settings.model_auth_mode == "api-key" or (
                 self._settings.model_auth_mode == "auto" and self._azure_endpoint
