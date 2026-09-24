@@ -193,10 +193,16 @@ def test_foundry_uses_default_azure_credential_without_key(monkeypatch):
     assert captured["request"].get_header("Authorization") == "Bearer managed-identity-token"
 
 
-def test_search_and_delete_file_tools(tmp_path: Path):
+def test_search_and_delete_file_tools(tmp_path: Path, monkeypatch):
     harness = DeepSeekHarness(_settings())
     path = tmp_path / "app.py"
     path.write_text("needle in a haystack\n", encoding="utf-8")
+    def fake_search(argv, **kwargs):
+        assert argv[0] == "rg"
+        assert argv[-2:] == ["needle", "."]
+        return SimpleNamespace(returncode=0, stdout="./app.py:1:needle in a haystack\n")
+
+    monkeypatch.setattr(deepseek_harness.subprocess, "run", fake_search)
     assert "app.py:1:needle" in harness._run_tool(
         tmp_path, "search_text", {"query": "needle"}, float("inf")
     )
