@@ -1,4 +1,4 @@
-"""Tool-calling coding agent backed by a self-hosted chat-completions endpoint."""
+"""Tool-calling coding agent backed by a self-hosted model endpoint."""
 
 from __future__ import annotations
 
@@ -116,6 +116,10 @@ _TOOLS = [
         },
     },
 ]
+_RESPONSES_TOOLS = [
+    {"type": "function", **tool["function"]}
+    for tool in _TOOLS
+]
 
 
 class DeepSeekHarness(CodingHarness):
@@ -132,11 +136,11 @@ class DeepSeekHarness(CodingHarness):
             or parsed.password
             or parsed.query
             or parsed.fragment
-            or not parsed.path.endswith("/chat/completions")
+            or not parsed.path.endswith(("/chat/completions", "/responses"))
             or parsed.hostname == "api.deepseek.com"
         ):
             raise HarnessError(
-                "MODEL_ENDPOINT must be a self-hosted HTTPS /chat/completions URL "
+                "MODEL_ENDPOINT must be a self-hosted HTTPS /chat/completions or /responses URL "
                 "without credentials or query"
             )
         if settings.model_auth_mode not in {"auto", "bearer", "api-key"}:
@@ -145,8 +149,9 @@ class DeepSeekHarness(CodingHarness):
             raise HarnessError("DeepSeek step and timeout limits must be positive")
         self._settings = settings
         self._endpoint = settings.model_endpoint
+        self._responses = parsed.path.endswith("/responses")
         self._azure_endpoint = bool(parsed.hostname and parsed.hostname.endswith(
-            (".openai.azure.com", ".services.ai.azure.com")
+            (".openai.azure.com", ".services.ai.azure.com", ".cognitiveservices.azure.com")
         ))
         if not settings.model_api_key and not self._azure_endpoint:
             raise HarnessError("MODEL_API_KEY is required outside Microsoft Foundry endpoints")
@@ -180,6 +185,8 @@ class DeepSeekHarness(CodingHarness):
             {"role": "user", "content": build_prompt(task, repository, history)},
         ]
         log.info("harness_started", provider="deepseek", task_id=task.task_id, repository=repository.key)
+        if self._responses:
+            return self._run_responses(root, messages, task.task_id, deadline)
         for step in range(self._settings.deepseek_max_steps):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -223,6 +230,72 @@ class DeepSeekHarness(CodingHarness):
                 log.info("harness_tool_called", task_id=task.task_id, tool=name)
         raise HarnessError(f"DeepSeek harness exceeded {self._settings.deepseek_max_steps} steps")
 
+    def _run_responses(
+        self, root: Path, messages: list[dict[str, Any]], task_id: str, deadline: float
+    ) -> str:
+        inputs: list[dict[str, Any]] = messages
+        previous_response_id: str | None = None
+        for step in range(self._settings.deepseek_max_steps):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise HarnessError("DeepSeek harness timed out")
+            response = self._request_responses(inputs, previous_response_id, min(120, remaining))
+            if response.get("status") != "completed":
+                raise HarnessError("model endpoint returned an incomplete response")
+            output = response.get("output")
+            if not isinstance(output, list):
+                raise HarnessError("model endpoint returned invalid response output")
+            calls = [item for item in output if isinstance(item, dict) and item.get("type") == "function_call"]
+            if len(calls) > 8:
+                raise HarnessError("DeepSeek returned too many tool calls in one turn")
+            if not calls:
+                content = [part.get("text") for item in output
+                           if isinstance(item, dict) and item.get("type") == "message"
+                           for part in item.get("content", [])
+                           if isinstance(part, dict) and part.get("type") == "output_text"]
+                if not content or not all(isinstance(part, str) for part in content):
+                    raise HarnessError("DeepSeek returned no final summary")
+                log.info("harness_finished", provider="deepseek", task_id=task_id, steps=step + 1)
+                return "\n".join(content).strip()
+            response_id = response.get("id")
+            if not isinstance(response_id, str) or not response_id:
+                raise HarnessError("model endpoint returned a response without an id")
+            previous_response_id = response_id
+            inputs = []
+            for call in calls:
+                call_id, name, arguments = call.get("call_id"), call.get("name"), call.get("arguments")
+                if not all(isinstance(value, str) for value in (call_id, name, arguments)):
+                    raise HarnessError("DeepSeek returned a malformed tool call")
+                if time.monotonic() >= deadline:
+                    raise HarnessError("DeepSeek harness timed out")
+                try:
+                    args = json.loads(arguments)
+                    if not isinstance(args, dict):
+                        raise TypeError("tool arguments must be an object")
+                    result = self._run_tool(root, name, args, deadline)
+                except (OSError, UnicodeError, ValueError, TypeError) as exc:
+                    result = f"Tool error: {exc}"
+                inputs.append({"type": "function_call_output", "call_id": call_id, "output": result})
+                log.info("harness_tool_called", task_id=task_id, tool=name)
+        raise HarnessError(f"DeepSeek harness exceeded {self._settings.deepseek_max_steps} steps")
+
+    def _request_responses(
+        self, inputs: list[dict[str, Any]], previous_response_id: str | None, timeout: float
+    ) -> dict[str, Any]:
+        request_body: dict[str, Any] = {
+            "model": self._settings.model_name,
+            "input": inputs,
+            "tools": _RESPONSES_TOOLS,
+        }
+        if previous_response_id is not None:
+            request_body["previous_response_id"] = previous_response_id
+        if self._settings.model_reasoning_effort:
+            request_body["reasoning"] = {"effort": self._settings.model_reasoning_effort}
+        data = self._post(request_body, timeout)
+        if not isinstance(data, dict):
+            raise HarnessError("model endpoint returned an invalid response")
+        return data
+
     def _request(self, messages: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
         request_body: dict[str, Any] = {
             "model": self._settings.model_name,
@@ -231,6 +304,16 @@ class DeepSeekHarness(CodingHarness):
         }
         if self._settings.model_reasoning_effort:
             request_body["reasoning_effort"] = self._settings.model_reasoning_effort
+        data = self._post(request_body, timeout)
+        try:
+            message = data["choices"][0]["message"]
+            if not isinstance(message, dict):
+                raise TypeError
+            return message
+        except (KeyError, IndexError, TypeError) as exc:
+            raise HarnessError("model endpoint returned an invalid completion") from exc
+
+    def _post(self, request_body: dict[str, Any], timeout: float) -> dict[str, Any]:
         payload = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
         if self._settings.model_api_key:
             key_header = self._settings.model_auth_mode == "api-key" or (
@@ -264,13 +347,7 @@ class DeepSeekHarness(CodingHarness):
             raise HarnessError("model endpoint request failed or timed out") from exc
         except (ValueError, UnicodeError) as exc:
             raise HarnessError("model endpoint returned invalid JSON") from exc
-        try:
-            message = data["choices"][0]["message"]
-            if not isinstance(message, dict):
-                raise TypeError
-            return message
-        except (KeyError, IndexError, TypeError) as exc:
-            raise HarnessError("model endpoint returned an invalid completion") from exc
+        return data
 
     def _run_tool(self, root: Path, name: str, args: dict[str, Any], deadline: float) -> str:
         if name == "list_files":

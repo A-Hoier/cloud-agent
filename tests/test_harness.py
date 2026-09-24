@@ -164,6 +164,74 @@ def test_model_reasoning_effort_is_sent_when_configured(monkeypatch):
     assert captured["body"]["reasoning_effort"] == "none"
 
 
+def test_responses_request_uses_medium_reasoning_and_flat_tools(monkeypatch):
+    harness = DeepSeekHarness(_settings(
+        MODEL_ENDPOINT="https://models.example.internal/v1/responses",
+        MODEL_REASONING_EFFORT="medium",
+    ))
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        captured["body"] = json.loads(request.data)
+        return BytesIO(b'{"id":"resp-1","status":"completed","output":[]}')
+
+    monkeypatch.setattr(deepseek_harness, "urlopen", fake_urlopen)
+    assert harness._request_responses([{"role": "user", "content": "Do it"}], None, 10)["id"] == "resp-1"
+    assert captured["request"].full_url == "https://models.example.internal/v1/responses"
+    assert captured["request"].get_header("Authorization") == "Bearer test-key"
+    assert captured["body"]["reasoning"] == {"effort": "medium"}
+    assert "reasoning_effort" not in captured["body"]
+    assert any(tool["name"] == "replace_text" for tool in captured["body"]["tools"])
+    assert all("function" not in tool for tool in captured["body"]["tools"])
+
+
+def test_responses_tool_loop_edits_file_and_continues_by_response_id(tmp_path: Path, monkeypatch):
+    harness = DeepSeekHarness(_settings(MODEL_ENDPOINT="https://models.example.internal/v1/responses"))
+    file = tmp_path / "app.py"
+    file.write_text('print("old")\n', encoding="utf-8")
+    requests = []
+    responses = iter([
+        {
+            "id": "resp-1", "status": "completed", "output": [{
+                "type": "function_call", "call_id": "call-1", "name": "replace_text",
+                "arguments": json.dumps({"path": "app.py", "old": "old", "new": "new"}),
+            }],
+        },
+        {
+            "id": "resp-2", "status": "completed", "output": [{
+                "type": "message", "content": [{"type": "output_text", "text": "Changed the greeting."}],
+            }],
+        },
+    ])
+
+    def fake_request(inputs, previous_response_id, timeout):
+        requests.append((json.loads(json.dumps(inputs)), previous_response_id))
+        return next(responses)
+
+    monkeypatch.setattr(harness, "_request_responses", fake_request)
+    assert harness.run(tmp_path, _task(), _repository()) == "Changed the greeting."
+    assert file.read_text(encoding="utf-8") == 'print("new")\n'
+    assert requests[0][1] is None
+    assert requests[1] == ([{
+        "type": "function_call_output", "call_id": "call-1", "output": "Updated app.py",
+    }], "resp-1")
+
+
+def test_responses_rejects_incomplete_output(tmp_path: Path, monkeypatch):
+    harness = DeepSeekHarness(_settings(MODEL_ENDPOINT="https://models.example.internal/v1/responses"))
+    monkeypatch.setattr(harness, "_request_responses", lambda *args: {
+        "id": "resp-1", "status": "incomplete", "output": [],
+    })
+    with pytest.raises(HarnessError, match="incomplete"):
+        harness.run(tmp_path, _task(), _repository())
+
+
+def test_dsh_rejects_responses_endpoint():
+    with pytest.raises(HarnessError, match="chat/completions"):
+        create_harness(_settings(HARNESS_PROVIDER="dsh", MODEL_ENDPOINT="https://models.example/v1/responses"))
+
+
 def test_self_hosted_endpoint_can_use_api_key_header(monkeypatch):
     harness = DeepSeekHarness(_settings(MODEL_AUTH_MODE="api-key"))
     captured = {}

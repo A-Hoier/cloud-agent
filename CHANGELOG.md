@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2 — 2026-09-24
+
+Added Responses API support to the built-in coding harness, including medium reasoning and
+multi-step function calling. Chat Completions remains supported for existing model endpoints.
+
 ## 0.1.1 — 2026-09-24
 
 Validated the first Azure Container Apps deployment, added secretless GitHub OIDC rollout of the

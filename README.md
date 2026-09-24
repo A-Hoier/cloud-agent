@@ -67,7 +67,7 @@ These are the only required application settings for a GitHub + Foundry deployme
 | `AZURE_CLIENT_ID` | both, if user-assigned identity | Managed identity client ID |
 | `GITHUB_REPOSITORIES` | both | Comma-separated `owner/repo` allow-list, e.g. `acme/api,acme/web@develop` |
 | `GITHUB_PAT` | worker only | Fine-grained token for clone, branch push, and PR |
-| `MODEL_ENDPOINT` | worker only | Full HTTPS `/chat/completions` URL |
+| `MODEL_ENDPOINT` | worker only | Full HTTPS `/responses` or `/chat/completions` URL |
 | `MODEL_NAME` | worker only | Deployment/model ID accepted by the endpoint |
 | `MODEL_API_KEY` | worker, optional | Model API key; if absent, use managed identity for a Foundry endpoint |
 
@@ -78,6 +78,7 @@ with `QUEUE_NAME`, `QUEUE_ACCOUNT_URL`, or `TASK_STATUS_CONTAINER_URL` if necess
 
 ```text
 https://models.internal.example/v1/chat/completions
+https://af-ahoier-pg.cognitiveservices.azure.com/openai/v1/responses
 https://my-resource.openai.azure.com/openai/v1/chat/completions
 https://my-resource.services.ai.azure.com/api/projects/my-project/openai/v1/chat/completions
 ```
@@ -91,10 +92,12 @@ is `https://ai.azure.com/.default` for a Foundry project endpoint and
 or GitHub PAT. Store secrets as ACA secrets and reference them by name, not literal command-line
 values.
 
-For models that require an explicit reasoning mode with function tools, set
-`MODEL_REASONING_EFFORT=none` (or another value supported by that model). The built-in harness
-forwards this field only when configured; it is omitted by default for endpoints that do not
-recognize it.
+For Responses API models with reasoning and function tools, set `MODEL_REASONING_EFFORT=medium`.
+The built-in harness sends this as `reasoning.effort` and uses response IDs to continue tool calls.
+Chat Completions endpoints remain supported and receive `reasoning_effort` instead; some models
+only support function calling there with `none`. The setting is omitted if unset. The `dsh`
+provider currently requires a Chat Completions endpoint; use the default `deepseek` provider for
+Responses API.
 
 For customized repository names, default branches, source paths, or guidance, provide a JSON
 allow-list with `REPOSITORY_REGISTRY_PATH` or `REPOSITORY_REGISTRY_BLOB_URL` instead of

@@ -25,6 +25,8 @@ class DshHarness(CodingHarness):
     def __init__(self, settings: Settings, credential: TokenCredential | None = None) -> None:
         self._settings = settings
         self._model = DeepSeekHarness(settings, credential)
+        if self._model._responses:
+            raise HarnessError("dsh requires a /chat/completions endpoint; use HARNESS_PROVIDER=deepseek")
         if settings.model_api_key and (
             settings.model_auth_mode == "api-key"
             or (settings.model_auth_mode == "auto" and self._model._azure_endpoint)
