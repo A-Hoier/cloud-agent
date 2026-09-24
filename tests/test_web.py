@@ -115,6 +115,18 @@ def _configure_app() -> FakeQueue:
     return queue
 
 
+def test_frontend_offers_persistent_theme_toggle():
+    response = TestClient(app).get("/")
+    assert response.status_code == 200
+    html = response.text
+    assert '<button id="theme-toggle" type="button">Switch to light theme</button>' in html
+    assert ':root[data-theme="light"]' in html
+    assert 'color-scheme: light' in html
+    assert "localStorage.getItem('coding-agent-theme')" in html
+    assert "localStorage.setItem('coding-agent-theme', theme)" in html
+    assert "themeToggle.addEventListener('click'" in html
+
+
 def test_frontend_lists_safe_repository_metadata():
     _configure_app()
     assert list_repositories("user-a") == [
