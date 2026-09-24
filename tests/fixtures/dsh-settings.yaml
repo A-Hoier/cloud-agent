@@ -1,0 +1,11 @@
+llm-pi-ai:
+  providers:
+    cloud-agent:
+      apiKeyEnv: CLOUD_AGENT_MODEL_TOKEN
+      api: openai-completions
+      baseURL: https://127.0.0.1:44444/v1
+      compat:
+        supportsDeveloperRole: false
+        maxTokensField: max_tokens
+      models:
+        - id: test-model

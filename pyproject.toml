@@ -1,0 +1,42 @@
+[project]
+name = "cloud-agent"
+version = "0.1.0"
+description = "Disposable coding agents launched from a web frontend on Azure Container Apps."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "azure-identity>=1.19",
+    "azure-storage-queue>=12.12",
+    "azure-storage-blob>=12.23",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.28",
+    "pytest>=8.3",
+    "ruff>=0.7",
+]
+
+[project.scripts]
+cloud-agent-worker = "aiops_agent.__main__:run"
+cloud-agent-web = "aiops_agent.web:main"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = ["integration: talks to real Azure resources and repositories"]

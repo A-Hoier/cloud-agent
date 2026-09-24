@@ -1,0 +1,11 @@
+{
+  "repositories": {
+    "example-service": {
+      "name": "Example service",
+      "repo_url": "https://github.com/your-org/example-service.git",
+      "default_branch": "main",
+      "source_path": ".",
+      "notes": "Replace this entry with a repository the worker identity may clone and push to."
+    }
+  }
+}

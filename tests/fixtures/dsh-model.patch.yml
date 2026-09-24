@@ -1,0 +1,16 @@
+- id: agent-default-model
+  config:
+    provider: cloud-agent
+    model: test-model
+- id: llm-deepseek
+  disabled: true
+- id: web-search-deepseek
+  disabled: true
+- id: session-telemetry-otel
+  disabled: true
+- id: web
+  disabled: true
+- id: web-fetch-http
+  disabled: true
+- id: tool-web
+  disabled: true
