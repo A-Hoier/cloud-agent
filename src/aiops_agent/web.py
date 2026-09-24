@@ -262,31 +262,53 @@ _INDEX_HTML = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Coding Agent</title>
+  <script>
+    try {
+      if (localStorage.getItem('coding-agent-theme') === 'light') {
+        document.documentElement.dataset.theme = 'light';
+      }
+    } catch (error) { /* Storage may be unavailable; keep the default dark theme. */ }
+  </script>
   <style>
-    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; }
-    body { margin: 0; background: #0b1020; color: #e8edf8; }
+    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif;
+      --page: #0b1020; --text: #e8edf8; --card: #131b31; --border: #263452;
+      --muted: #aebbd3; --field-border: #3a4967; --surface: #0c1428;
+      --button: #6d7cff; --button-text: #fff; --user-accent: #6d7cff;
+      --assistant-accent: #3bbf9b; --code: #b9c2ff; }
+    :root[data-theme="light"] { color-scheme: light;
+      --page: #f3f6fc; --text: #1c2941; --card: #fff; --border: #c9d3e2;
+      --muted: #42516a; --field-border: #8493aa; --surface: #eef2f9;
+      --button: #3449b5; --button-text: #fff; --user-accent: #3449b5;
+      --assistant-accent: #167c61; --code: #3449b5; }
+    body { margin: 0; background: var(--page); color: var(--text); }
     main { max-width: 760px; margin: 8vh auto; padding: 0 24px; }
-    .card { background: #131b31; border: 1px solid #263452; border-radius: 16px; padding: 28px; }
-    h1 { margin-top: 0; font-size: 30px; }
-    p { color: #aebbd3; line-height: 1.55; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 28px; }
+    .header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    h1 { margin: 0; font-size: 30px; }
+    p { color: var(--muted); line-height: 1.55; }
     label { display: block; margin: 20px 0 8px; font-weight: 650; }
-    select, textarea, input { box-sizing: border-box; width: 100%; border: 1px solid #3a4967;
-      border-radius: 9px; background: #0c1428; color: inherit; padding: 12px; font: inherit; }
+    select, textarea, input { box-sizing: border-box; width: 100%; border: 1px solid var(--field-border);
+      border-radius: 9px; background: var(--surface); color: inherit; padding: 12px; font: inherit; }
     input[type=checkbox] { width: auto; margin-right: 8px; }
     textarea { min-height: 220px; resize: vertical; }
     button { margin-top: 20px; border: 0; border-radius: 9px; padding: 12px 18px;
-      background: #6d7cff; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+      background: var(--button); color: var(--button-text); font: inherit; font-weight: 700; cursor: pointer; }
+    #theme-toggle { margin: 0; border: 1px solid var(--field-border);
+      background: var(--surface); color: var(--text); }
     button:disabled { opacity: .55; cursor: wait; }
-    #result { margin-top: 18px; padding: 12px; border-radius: 9px; background: #0c1428; display: none; }
+    #result { margin-top: 18px; padding: 12px; border-radius: 9px; background: var(--surface); display: none; }
     #chat { margin-top: 20px; display: grid; gap: 12px; }
-    .message { white-space: pre-wrap; background: #0c1428; padding: 14px; border-radius: 9px; }
-    .message.user { border-left: 3px solid #6d7cff; }
-    .message.assistant { border-left: 3px solid #3bbf9b; }
-    code { color: #b9c2ff; }
+    .message { white-space: pre-wrap; background: var(--surface); padding: 14px; border-radius: 9px; }
+    .message.user { border-left: 3px solid var(--user-accent); }
+    .message.assistant { border-left: 3px solid var(--assistant-accent); }
+    code { color: var(--code); }
   </style>
 </head>
 <body><main><div class="card">
-  <h1>Coding sessions</h1>
+  <div class="header">
+    <h1>Coding sessions</h1>
+    <button id="theme-toggle" type="button">Switch to light theme</button>
+  </div>
   <p>Each message runs in a fresh, isolated job. The conversation is saved, and code changes stay
   on this session's Git branch, or go directly to main if you explicitly choose that mode.</p>
   <label for="sessions">Session</label><select id="sessions"></select>
@@ -306,6 +328,19 @@ _INDEX_HTML = """<!doctype html>
   <div id="result"></div>
 </div></main>
 <script>
+const themeToggle = document.querySelector('#theme-toggle');
+function updateThemeButton() {
+  const isLight = document.documentElement.dataset.theme === 'light';
+  themeToggle.textContent = isLight ? 'Switch to dark theme' : 'Switch to light theme';
+}
+updateThemeButton();
+themeToggle.addEventListener('click', () => {
+  const theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = theme;
+  updateThemeButton();
+  try { localStorage.setItem('coding-agent-theme', theme); }
+  catch (error) { /* Theme still works for this page if storage is unavailable. */ }
+});
 const form = document.querySelector('#message-form');
 const repos = document.querySelector('#repository');
 const sessions = document.querySelector('#sessions');
