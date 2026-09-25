@@ -16,10 +16,14 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from .config import Settings
+from .job_control import JobStopError, JobStopper
+from .logging_setup import get_logger
 from .models import CodingTask, RepositoryRecord
 from .repository_registry import RepositoryNotRegisteredError, RepositoryRegistry
 from .session import SessionConflictError, SessionStore
 from .status import TaskStatusStore
+
+log = get_logger(__name__)
 
 
 class TaskRequest(BaseModel):
@@ -40,6 +44,10 @@ class MessageRequest(BaseModel):
     instruction: Annotated[str, Field(min_length=1, max_length=20_000)]
 
 
+class CancelRequest(BaseModel):
+    task_id: str
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = Settings.from_env()
@@ -54,6 +62,14 @@ async def lifespan(app: FastAPI):
             credential=credential,
         )
         app.state.registry = RepositoryRegistry.load(settings, credential)
+        app.state.default_direct_to_main = settings.default_direct_to_main
+        app.state.job_stopper = (
+            JobStopper(
+                credential, settings.azure_subscription_id, settings.azure_resource_group,
+                settings.worker_job_name,
+            )
+            if settings.azure_subscription_id and settings.azure_resource_group else None
+        )
         status_store = TaskStatusStore(settings.status_container_url, credential)
         session_store = SessionStore(settings.status_container_url, credential)
         app.state.queue = queue
@@ -93,7 +109,9 @@ def main() -> None:
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
-    return _INDEX_HTML
+    return _INDEX_HTML.replace("__DEFAULT_DIRECT_TO_MAIN__", str(
+        getattr(app.state, "default_direct_to_main", False)
+    ).lower())
 
 
 @app.get("/health")
@@ -200,6 +218,70 @@ def get_session(session_id: str, owner_id: str = Depends(_require_owner)) -> dic
         return app.state.session_store.read_for_owner(session_id, owner_id)
     except (ResourceNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=404, detail="session not found") from exc
+
+
+@app.post("/api/sessions/{session_id}/direct-to-main")
+def activate_session_direct_to_main(
+    session_id: str, owner_id: str = Depends(_require_owner)
+) -> dict[str, object]:
+    try:
+        session = app.state.session_store.read_for_owner(session_id, owner_id)
+    except (ResourceNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
+    try:
+        repository = app.state.registry.resolve(session["repository"])
+    except RepositoryNotRegisteredError as exc:
+        raise HTTPException(status_code=404, detail="repository not found") from exc
+    _validate_direct_to_main(repository, session["target_branch"], False)
+    try:
+        return app.state.session_store.activate_direct_to_main(session_id, owner_id)
+    except ResourceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
+    except SessionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/sessions/{session_id}/cancel")
+def cancel_session_turn(
+    session_id: str, request: CancelRequest, owner_id: str = Depends(_require_owner)
+) -> dict[str, str]:
+    try:
+        session = app.state.session_store.read_for_owner(session_id, owner_id)
+    except (ResourceNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
+    if session.get("active_task_id") != request.task_id and not (
+        session.get("state") == "cancelled" and session.get("last_task_id") == request.task_id
+    ):
+        raise HTTPException(status_code=409, detail="this run is no longer active")
+    execution_name = session.get("active_execution_name") or session.get("cancelled_execution_name")
+    stopper = getattr(app.state, "job_stopper", None)
+    if execution_name and stopper is None:
+        raise HTTPException(status_code=503, detail="job stopping is not configured")
+    try:
+        cancelled = app.state.session_store.cancel_turn(session_id, request.task_id, owner_id)
+    except (ResourceNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
+    except SessionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    execution_name = cancelled.get("cancelled_execution_name")
+    if execution_name:
+        try:
+            stopper.stop_execution(execution_name)
+        except JobStopError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Cancellation was recorded but Azure did not confirm the job stop. Retry cancellation.",
+            ) from exc
+        app.state.session_store.acknowledge_execution_stop(session_id, request.task_id, owner_id)
+    try:
+        app.state.status_store.write(
+            request.task_id, repository=cancelled["repository"], owner_id=owner_id, state="cancelled"
+        )
+    except Exception:
+        log.exception("cancelled_task_status_write_failed", task_id=request.task_id)
+    return {"session_id": session_id, "task_id": request.task_id, "status": "cancelled"}
 
 
 @app.post("/api/sessions/{session_id}/messages", status_code=202)
@@ -350,6 +432,9 @@ const result = document.querySelector('#result');
 const button = document.querySelector('#submit');
 let sessionIds = [];
 let sessionNames = {};
+let sessionDates = {};
+let repoMeta = {};
+const defaultDirectToMain = __DEFAULT_DIRECT_TO_MAIN__;
 const linkedSession = new URLSearchParams(location.search).get('session');
 async function loadSessions() {
   const response = await fetch('/api/sessions');
@@ -358,32 +443,50 @@ async function loadSessions() {
   sessionIds = available.map(item => item.session_id);
   sessionNames = Object.fromEntries(available.map(item =>
     [item.session_id, `${item.repository} · ${item.session_id.slice(0, 8)}`]));
+  sessionDates = Object.fromEntries(available.map(item => [item.session_id, item.updated_at]));
   if (sessionIds.length) rememberSession(
     linkedSession && sessionIds.includes(linkedSession) ? linkedSession : sessionIds[0]);
 }
 async function loadRepositories() {
   const response = await fetch('/api/repositories');
   const available = await response.json();
+  repoMeta = Object.fromEntries(available.map(repo => [repo.id, repo]));
   for (const repo of available) {
     const option = document.createElement('option');
     option.value = repo.id;
     option.textContent = `${repo.name} (${repo.default_branch})`;
     repos.appendChild(option);
   }
+  repos.addEventListener('change', setNewSessionDefault);
+  setNewSessionDefault();
+}
+function setNewSessionDefault() {
+  const repo = repoMeta[repos.value];
+  document.querySelector('#direct-to-main').checked = Boolean(
+    defaultDirectToMain && repo?.supports_auto_merge && repo.default_branch === 'main');
+}
+function formatDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString();
+}
+function renderSessions(selected) {
+  sessionIds.sort((a, b) => Date.parse(sessionDates[b] || 0) - Date.parse(sessionDates[a] || 0));
+  sessions.replaceChildren();
+  for (const sessionId of sessionIds) {
+    const option = document.createElement('option');
+    option.value = sessionId;
+    option.textContent = `${sessionNames[sessionId] || sessionId.slice(0, 8)}` +
+      ` · ${formatDate(sessionDates[sessionId])}`;
+    sessions.appendChild(option);
+  }
+  sessions.value = selected;
 }
 function showMessage(message) {
   result.style.display = 'block'; result.textContent = message;
 }
 function rememberSession(id) {
-  sessionIds = [id, ...sessionIds.filter(item => item !== id)].slice(0, 20);
-  sessions.replaceChildren();
-  for (const sessionId of sessionIds) {
-    const option = document.createElement('option');
-    option.value = sessionId;
-    option.textContent = sessionNames[sessionId] || sessionId.slice(0, 8);
-    sessions.appendChild(option);
-  }
-  sessions.value = id;
+  if (!sessionIds.includes(id)) sessionIds.push(id);
+  renderSessions(id);
   history.replaceState({}, '', `?session=${encodeURIComponent(id)}`);
 }
 async function refreshSession() {
@@ -394,12 +497,14 @@ async function refreshSession() {
   const session = await response.json();
   if (sessions.value !== selected) return;
   sessionNames[selected] = `${session.repository} · ${selected.slice(0, 8)}`;
-  sessions.selectedOptions[0].textContent = sessionNames[selected];
+  sessionDates[selected] = session.updated_at;
+  renderSessions(selected);
   sessionStatus.replaceChildren();
   const label = document.createElement('p');
   label.textContent = `${session.repository} · ${session.state}` +
     (session.branch ? ` · ${session.branch}` : '') +
-    (session.direct_to_main ? ' · direct to main' : '');
+    (session.direct_to_main ? ' · direct to main' : '') +
+    ` · Updated ${formatDate(session.updated_at)}`;
   sessionStatus.appendChild(label);
   if (session.pull_request_url?.startsWith('https://github.com/')) {
     const anchor = document.createElement('a');
@@ -408,6 +513,36 @@ async function refreshSession() {
     anchor.rel = 'noopener noreferrer'; anchor.target = '_blank';
     sessionStatus.appendChild(anchor);
   }
+  if (session.active_task_id || session.cancelled_execution_name) {
+    const stop = document.createElement('button');
+    stop.type = 'button'; stop.textContent = session.active_task_id ? 'Stop run now' : 'Retry stop request';
+    stop.addEventListener('click', async () => {
+      if (session.active_task_id && !confirm('Stop this run? Unpushed changes will be lost.')) return;
+      stop.disabled = true;
+      const reply = await fetch(`/api/sessions/${encodeURIComponent(selected)}/cancel`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({task_id: session.active_task_id || session.last_task_id})});
+      const body = await reply.json();
+      showMessage(reply.ok ? 'Run cancelled.' : (body.detail || 'Could not stop the run.'));
+      await refreshSession();
+    });
+    sessionStatus.appendChild(stop);
+  } else if (!session.direct_to_main && session.target_branch === 'main' &&
+             repoMeta[session.repository]?.supports_auto_merge) {
+    const direct = document.createElement('button');
+    direct.type = 'button'; direct.textContent = 'Use main for future messages';
+    direct.addEventListener('click', async () => {
+      if (!confirm('Future changes in this session will push directly to main without review. Continue?')) return;
+      direct.disabled = true;
+      const reply = await fetch(`/api/sessions/${encodeURIComponent(selected)}/direct-to-main`,
+        {method: 'POST'});
+      const body = await reply.json();
+      showMessage(reply.ok ? 'Future messages will push directly to main.' :
+        (body.detail || 'Could not change delivery mode.'));
+      await refreshSession();
+    });
+    sessionStatus.appendChild(direct);
+  }
   chat.replaceChildren();
   for (const message of session.messages) {
     const card = document.createElement('div');
@@ -415,7 +550,7 @@ async function refreshSession() {
     card.textContent = `${message.role === 'user' ? 'You' : 'Agent'}\n${message.content}`;
     chat.appendChild(card);
   }
-  button.disabled = Boolean(session.active_task_id);
+  button.disabled = Boolean(session.active_task_id || session.cancelled_execution_name);
 }
 document.querySelector('#new-session').addEventListener('click', async () => {
   result.style.display = 'none';
@@ -426,6 +561,8 @@ document.querySelector('#new-session').addEventListener('click', async () => {
       direct_to_main: document.querySelector('#direct-to-main').checked})});
   const body = await response.json();
   if (!response.ok) { showMessage(body.detail || 'Could not start session'); return; }
+  sessionDates[body.session_id] = body.updated_at;
+  sessionNames[body.session_id] = `${body.repository} · ${body.session_id.slice(0, 8)}`;
   rememberSession(body.session_id);
   await refreshSession();
 });

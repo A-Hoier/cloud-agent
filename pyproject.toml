@@ -1,6 +1,6 @@
 [project]
 name = "cloud-agent"
-version = "0.1.3"
+version = "0.1.4"
 description = "Disposable coding agents launched from a web frontend on Azure Container Apps."
 readme = "README.md"
 license = "MIT"

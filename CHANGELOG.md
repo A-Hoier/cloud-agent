@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4 — 2026-09-25
+
+Added owner-controlled cancellation of an active session turn, including a targeted Azure
+Container Apps Job execution stop and cancellation-safe queue retries. Sessions now show local
+date and time and sort by most recently updated. Existing idle sessions can opt in to direct-to-main,
+and deployments can preselect that mode for new sessions without changing the default.
+
 ## 0.1.3 — 2026-09-24
 
 Added an explicit direct-to-main delivery mode for GitHub sessions and API tasks. The application

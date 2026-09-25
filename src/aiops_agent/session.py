@@ -44,6 +44,7 @@ class SessionStore:
             "updated_at": now,
             "state": "idle",
             "active_task_id": None,
+            "active_execution_name": None,
             "last_task_id": None,
             "branch": None,
             "pull_request_url": None,
@@ -65,6 +66,62 @@ class SessionStore:
         if session.get("owner_id") != owner_id:
             raise ValueError("session not found")
         return session
+
+    def activate_direct_to_main(self, session_id: str, owner_id: str) -> dict[str, Any]:
+        """Move an idle, owner-controlled session to main for all future turns."""
+
+        def mutate(session: dict[str, Any]) -> None:
+            if session.get("owner_id") != owner_id:
+                raise ValueError("session not found")
+            if session.get("target_branch") != "main":
+                raise ValueError("direct-to-main requires the main base branch")
+            if session.get("active_task_id") or session.get("state") == "unpersisted":
+                raise SessionConflictError("finish the current turn before changing delivery mode")
+            session["direct_to_main"] = True
+            session["branch"] = "main"
+            session["pull_request_url"] = None
+
+        return self._update(session_id, mutate, owner_id)
+
+    def cancel_turn(self, session_id: str, task_id: str, owner_id: str) -> dict[str, Any]:
+        """Cancel only the owner's currently active turn; retries become no-ops."""
+
+        def mutate(session: dict[str, Any]) -> None:
+            if session.get("owner_id") != owner_id:
+                raise ValueError("session not found")
+            if session.get("state") == "cancelled" and session.get("last_task_id") == task_id:
+                return
+            if session.get("active_task_id") != task_id:
+                raise SessionConflictError("this run is no longer active")
+            session["cancelled_execution_name"] = session.get("active_execution_name")
+            session["active_execution_name"] = None
+            session["active_task_id"] = None
+            session["last_task_id"] = task_id
+            session["state"] = "cancelled"
+            session["messages"].append({
+                "role": "assistant", "content": "Run cancelled by the user.",
+                "task_id": task_id, "created_at": _now(),
+            })
+
+        return self._update(session_id, mutate, owner_id)
+
+    def acknowledge_execution_stop(self, session_id: str, task_id: str, owner_id: str) -> None:
+        def mutate(session: dict[str, Any]) -> None:
+            if session.get("owner_id") != owner_id:
+                raise ValueError("session not found")
+            if session.get("state") != "cancelled" or session.get("last_task_id") != task_id:
+                raise SessionConflictError("this run is no longer cancelled")
+            session["cancelled_execution_name"] = None
+
+        self._update(session_id, mutate, owner_id)
+
+    def ensure_turn_active(self, task: CodingTask) -> None:
+        if not task.session_id:
+            return
+        session = self.read(task.session_id, task.owner_id)
+        if session.get("owner_id") != task.owner_id:
+            raise SessionConflictError("task does not match its session owner")
+        _check_active_turn(session, task.task_id)
 
     def list_for_owner(self, owner_id: str) -> list[dict[str, Any]]:
         prefix = f"sessions/{_owner_bucket(owner_id)}/"
@@ -96,6 +153,8 @@ class SessionStore:
                 raise ValueError("session not found")
             if session["active_task_id"]:
                 raise SessionConflictError("this session is already working on a message")
+            if session.get("cancelled_execution_name"):
+                raise SessionConflictError("the cancelled worker is still being stopped")
             session["messages"].append(
                 {
                     "role": "user",
@@ -105,6 +164,8 @@ class SessionStore:
                 }
             )
             session["active_task_id"] = task_id
+            session["active_execution_name"] = None
+            session["cancelled_execution_name"] = None
             session["state"] = "queued"
 
         session = self._update(session_id, mutate, owner_id)
@@ -119,7 +180,7 @@ class SessionStore:
             owner_id=session.get("owner_id"),
         )
 
-    def start_turn(self, task: CodingTask) -> list[dict[str, str]]:
+    def start_turn(self, task: CodingTask, execution_name: str | None = None) -> list[dict[str, str]]:
         if not task.session_id:
             return []
 
@@ -137,6 +198,7 @@ class SessionStore:
             if matching_message is None or matching_message["content"] != task.instruction:
                 raise SessionConflictError("task instruction does not match its session message")
             session["state"] = "running"
+            session["active_execution_name"] = execution_name
 
         session = self._update(task.session_id, mutate, task.owner_id)
         return [
@@ -168,17 +230,18 @@ class SessionStore:
                 session["pull_request_url"] = result.pull_request_url
             session["state"] = "unpersisted" if result.files_changed and not result.pushed else "idle"
             session["active_task_id"] = None
+            session["active_execution_name"] = None
             session["last_task_id"] = task.task_id
 
         self._update(task.session_id, mutate, task.owner_id)
 
     def mark_retrying(self, task: CodingTask) -> None:
         if task.session_id:
-            self._update(
-                task.session_id,
-                lambda session: _set_turn_state(session, task.task_id, "retrying"),
-                task.owner_id,
-            )
+            def mutate(session: dict[str, Any]) -> None:
+                _set_turn_state(session, task.task_id, "retrying")
+                session["active_execution_name"] = None
+
+            self._update(task.session_id, mutate, task.owner_id)
 
     def fail_turn(self, task: CodingTask, message: str = "The coding job failed. You can try again.") -> None:
         if not task.session_id:
@@ -191,6 +254,7 @@ class SessionStore:
             )
             session["state"] = "failed"
             session["active_task_id"] = None
+            session["active_execution_name"] = None
             session["last_task_id"] = task.task_id
 
         self._update(task.session_id, mutate, task.owner_id)

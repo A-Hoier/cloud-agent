@@ -33,6 +33,10 @@ class Settings:
     azure_devops_pat: str | None
     github_token: str | None
     push_enabled: bool
+    default_direct_to_main: bool
+    azure_subscription_id: str | None
+    azure_resource_group: str | None
+    worker_job_name: str
 
     # Coding harness
     harness_provider: str
@@ -93,6 +97,10 @@ class Settings:
             azure_devops_pat=e.get("AZURE_DEVOPS_PAT") or None,
             github_token=e.get("GITHUB_PAT") or e.get("GIT_GITHUB_TOKEN") or None,
             push_enabled=_bool(e, "PUSH_ENABLED", True),
+            default_direct_to_main=_bool(e, "DEFAULT_DIRECT_TO_MAIN", False),
+            azure_subscription_id=e.get("AZURE_SUBSCRIPTION_ID") or None,
+            azure_resource_group=e.get("AZURE_RESOURCE_GROUP") or None,
+            worker_job_name=e.get("WORKER_JOB_NAME", "cloud-agent-worker"),
             harness_provider=harness_provider,
             copilot_binary=e.get("COPILOT_BINARY", "copilot"),
             copilot_model=e.get("COPILOT_MODEL") or None,

@@ -39,8 +39,10 @@ class SuccessfulPipeline:
     def __init__(self) -> None:
         self.history = None
 
-    def handle(self, task, history=None):
+    def handle(self, task, history=None, before_push=None):
         self.history = history
+        if before_push:
+            before_push()
         return TaskResult(
             task.task_id,
             "agent/task/api-240cb99a-028",
@@ -52,7 +54,7 @@ class SuccessfulPipeline:
 
 
 class FailingPipeline:
-    def handle(self, task, history=None):
+    def handle(self, task, history=None, before_push=None):
         raise RuntimeError("unexpected error")
 
 
@@ -61,8 +63,11 @@ class FakeSessionStore:
         self.completed = False
         self.retried = False
 
-    def start_turn(self, task):
+    def start_turn(self, task, execution_name=None):
         return [{"role": "user", "content": "Previous request"}]
+
+    def ensure_turn_active(self, task):
+        pass
 
     def complete_turn(self, task, result):
         self.completed = True

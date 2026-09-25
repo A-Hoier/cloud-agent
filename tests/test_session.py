@@ -102,6 +102,45 @@ def test_only_one_active_turn_per_session(store: SessionStore):
     assert store.queue_turn(session_id, "Try again").instruction == "Try again"
 
 
+def test_cancelled_turn_cannot_restart_or_push_and_new_turn_can_start(store: SessionStore):
+    session_id = store.create("api", "main", owner_id="alice")["session_id"]
+    task = store.queue_turn(session_id, "First", owner_id="alice")
+    store.start_turn(task, "cloud-agent-worker-abc123")
+    with pytest.raises((ValueError, FileNotFoundError)):
+        store.cancel_turn(session_id, task.task_id, "bob")
+    cancelled = store.cancel_turn(session_id, task.task_id, "alice")
+    assert cancelled["state"] == "cancelled"
+    assert cancelled["cancelled_execution_name"] == "cloud-agent-worker-abc123"
+    assert cancelled["active_task_id"] is None
+    assert store.cancel_turn(session_id, task.task_id, "alice")["state"] == "cancelled"
+    with pytest.raises(SessionConflictError, match="still being stopped"):
+        store.queue_turn(session_id, "Too soon", owner_id="alice")
+    with pytest.raises(TurnAlreadyCompleted):
+        store.start_turn(task)
+    with pytest.raises(TurnAlreadyCompleted):
+        store.ensure_turn_active(task)
+    with pytest.raises(TurnAlreadyCompleted):
+        store.complete_turn(task, TaskResult(task.task_id, "main", True, [], "Late result"))
+    store.acknowledge_execution_stop(session_id, task.task_id, "alice")
+    following = store.queue_turn(session_id, "Second", owner_id="alice")
+    assert following.task_id != task.task_id
+    assert store.read(session_id, "alice")["cancelled_execution_name"] is None
+
+
+def test_owner_can_switch_idle_session_to_main_but_not_active_one(store: SessionStore):
+    session_id = store.create("api", "main", owner_id="alice")["session_id"]
+    with pytest.raises((ValueError, FileNotFoundError)):
+        store.activate_direct_to_main(session_id, "bob")
+    task = store.queue_turn(session_id, "Do it", owner_id="alice")
+    with pytest.raises(SessionConflictError, match="finish the current turn"):
+        store.activate_direct_to_main(session_id, "alice")
+    store.fail_turn(task)
+    changed = store.activate_direct_to_main(session_id, "alice")
+    assert changed["direct_to_main"] is True
+    assert changed["branch"] == "main"
+    assert store.queue_turn(session_id, "Do it now", owner_id="alice").direct_to_main is True
+
+
 def test_direct_to_main_mode_is_immutable_and_checked_for_queued_turns(store: SessionStore):
     session_id = store.create("api", "main", owner_id="alice", direct_to_main=True)["session_id"]
     task = store.queue_turn(session_id, "Ship it", owner_id="alice")
@@ -199,8 +238,10 @@ def test_worker_turn_roundtrip_uses_persisted_history(store: SessionStore):
     class Pipeline:
         history = None
 
-        def handle(self, task, history):
+        def handle(self, task, history, before_push=None):
             self.history = history
+            if before_push:
+                before_push()
             return TaskResult(task.task_id, "session-branch", True, ["tests.py"], "Second done")
 
     class Status:

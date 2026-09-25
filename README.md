@@ -26,7 +26,7 @@ for deployments. [The publishing workflow](.github/workflows/publish.yml) uses G
 want anonymous pulls. A private package needs an ACA registry credential.
 
 To publish a release, update the version in `pyproject.toml` and `CHANGELOG.md`, merge to `main`,
-then push an annotated matching tag such as `v0.1.0`. The workflow rejects a tag whose version
+then push an annotated matching tag such as `v0.1.4`. The workflow rejects a tag whose version
 does not match `pyproject.toml`.
 
 The optional `deploy` job updates an existing Container App named `cloud-agent-web` and an event
@@ -108,10 +108,23 @@ session. The frontend never accepts arbitrary clone URLs.
 
 By default, a coding turn pushes to a session branch and opens a pull request. For a trusted
 GitHub repository whose selected base branch is `main`, choose **Commit directly to main** when
-creating a session, or send `direct_to_main: true` to `POST /api/tasks`. This mode is explicit,
-fixed for the session, and incompatible with auto-merge. The application commits and performs a
+creating a session, or send `direct_to_main: true` to `POST /api/tasks`. An existing idle session
+on GitHub/main can switch to this mode with the **Use main for future messages** button; only its
+owner can make the change. `DEFAULT_DIRECT_TO_MAIN=true` on the web app preselects the checkbox
+for new eligible sessions, but the open-source default is off. This mode is incompatible with
+auto-merge. The application commits and performs a
 normal fast-forward push; the model never receives Git write tools. Branch protection can reject
 the push, and concurrent updates are never force-pushed.
+
+An active session has a **Stop run now** button. It marks the turn cancelled immediately, asks
+Azure to stop that specific worker execution, and prevents a cancelled queue message from being
+processed on a later retry. The worker checks cancellation before committing. Configure
+`AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, and optionally `WORKER_JOB_NAME` on the **web**
+app for this control. Its managed identity needs the custom Azure RBAC action
+`Microsoft.App/jobs/stop/execution/action` on the worker job resource. Do not grant the built-in
+Container Apps Jobs Operator/Contributor roles just for stopping: those roles also allow reading
+job secrets. [Microsoft documents the narrow action and wildcard risk](https://learn.microsoft.com/en-us/azure/container-apps/jobs).
+Azure may take a short time to terminate a stop request; an already-finished push cannot be undone.
 
 Optional settings: `PUSH_ENABLED=false` for a trial without remote writes;
 `HARNESS_PROVIDER=dsh` for the upstream headless CLI (Bearer model auth only), or
@@ -129,7 +142,7 @@ and use ACA secret references for the PAT and optional model key:
 ```bash
 az containerapp create \
   --name cloud-agent-web --resource-group <rg> --environment <environment> \
-  --image ghcr.io/a-hoier/cloud-agent:0.1.3 \
+  --image ghcr.io/a-hoier/cloud-agent:0.1.4 \
   --user-assigned <identity-resource-id> \
   --ingress external --target-port 8000 --command cloud-agent-web \
   --env-vars AZURE_STORAGE_ACCOUNT_NAME=<account> AZURE_CLIENT_ID=<identity-client-id> \
@@ -144,7 +157,7 @@ this setting. Restrict which users can sign in through your Entra app assignment
 ```bash
 az containerapp job create \
   --name cloud-agent-worker --resource-group <rg> --environment <environment> \
-  --image ghcr.io/a-hoier/cloud-agent:0.1.3 \
+  --image ghcr.io/a-hoier/cloud-agent:0.1.4 \
   --mi-user-assigned <identity-resource-id> \
   --trigger-type Event --replica-timeout 1800 --replica-retry-limit 0 \
   --parallelism 1 --min-executions 0 --max-executions 5 --polling-interval 30 \

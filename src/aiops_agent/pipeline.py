@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from azure.core.credentials import TokenCredential
 
 from .config import ConfigError, Settings
@@ -26,7 +28,10 @@ class CodingPipeline:
         self._harness = create_harness(settings, credential)
         self._workspace = RepoWorkspace(settings, credential)
 
-    def handle(self, task: CodingTask, history: list[dict[str, str]] | None = None) -> TaskResult:
+    def handle(
+        self, task: CodingTask, history: list[dict[str, str]] | None = None,
+        before_push: Callable[[], None] | None = None,
+    ) -> TaskResult:
         repository = self._registry.resolve(task.repository)
         is_github = repository.repo_url.startswith("https://github.com/")
         if task.merge_when_ready and not is_github:
@@ -35,7 +40,7 @@ class CodingPipeline:
         if task.direct_to_main:
             if not is_github or base_branch != "main" or task.merge_when_ready:
                 raise ValueError("direct-to-main requires a GitHub repository on main without auto merge")
-            return self._handle_direct_to_main(task, repository, history)
+            return self._handle_direct_to_main(task, repository, history, before_push)
         log.info(
             "repository_resolved",
             task_id=task.task_id,
@@ -70,6 +75,8 @@ class CodingPipeline:
 
         if not branch_exists:
             repo.create_branch(branch)
+        if before_push:
+            before_push()
         pushed = repo.commit_and_push(branch, _commit_message(task, repository, summary), self._settings)
         log.info("task_prepared", task_id=task.task_id, branch=branch, pushed=pushed, files=changed)
         if pushed:
@@ -77,7 +84,8 @@ class CodingPipeline:
         return TaskResult(task.task_id, branch, False, changed, summary)
 
     def _handle_direct_to_main(
-        self, task: CodingTask, repository: RepositoryRecord, history: list[dict[str, str]] | None
+        self, task: CodingTask, repository: RepositoryRecord, history: list[dict[str, str]] | None,
+        before_push: Callable[[], None] | None,
     ) -> TaskResult:
         repo = self._workspace.clone(repository.repo_url, "main")
         prior_summary = repo.recent_task_commit_summary(task.task_id)
@@ -90,6 +98,8 @@ class CodingPipeline:
         if not changed:
             log.warning("no_changes_proposed", task_id=task.task_id, repository=repository.key)
             return TaskResult(task.task_id, "main", False, [], summary)
+        if before_push:
+            before_push()
         pushed = repo.commit_and_push("main", _commit_message(task, repository, summary), self._settings)
         log.info("task_prepared", task_id=task.task_id, branch="main", pushed=pushed, files=changed)
         return TaskResult(task.task_id, "main", pushed, changed, summary)

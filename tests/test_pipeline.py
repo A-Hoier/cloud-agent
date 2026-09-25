@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from aiops_agent.config import Settings
 from aiops_agent.models import CodingTask, RepositoryRecord
 from aiops_agent.pipeline import CodingPipeline
@@ -76,6 +78,7 @@ class ChangingRepo(FakeRepo):
     def __init__(self) -> None:
         super().__init__()
         self.committed = False
+        self.push_attempts = 0
 
     def changed_files(self) -> list[str]:
         return ["app.py"]
@@ -87,6 +90,7 @@ class ChangingRepo(FakeRepo):
         return "Recovered the previous answer"
 
     def commit_and_push(self, branch: str, message: str, settings: Settings) -> bool:
+        self.push_attempts += 1
         assert f"Task: {self.expected_task_id}" in message
         return True
 
@@ -202,3 +206,25 @@ def test_direct_to_main_pushes_without_feature_branch_or_pull_request():
     replay = pipeline.handle(task)
     assert replay.harness_summary == "Already delivered"
     assert len(pipeline._harness.histories) == 1
+
+
+def test_cancel_before_push_prevents_git_write():
+    settings = Settings.from_env({
+        "QUEUE_ACCOUNT_URL": "https://example.queue.core.windows.net",
+        "GITHUB_REPOSITORIES": "acme/api",
+        "TASK_STATUS_CONTAINER_URL": "https://example.blob.core.windows.net/status",
+    })
+    pipeline = CodingPipeline.__new__(CodingPipeline)
+    pipeline._settings = settings
+    pipeline._registry = RepositoryRegistry({
+        "api": RepositoryRecord("api", "API", "https://github.com/acme/api.git")
+    })
+    pipeline._workspace = SessionWorkspace()
+    pipeline._harness = RecordingHarness()
+    task = CodingTask(
+        "240cb99a-0287-4fa1-a296-d976dd0c24bc", "api", "Do it", datetime.now(UTC),
+        direct_to_main=True,
+    )
+    with pytest.raises(RuntimeError, match="cancelled"):
+        pipeline.handle(task, before_push=lambda: (_ for _ in ()).throw(RuntimeError("cancelled")))
+    assert pipeline._workspace.repos[0].push_attempts == 0

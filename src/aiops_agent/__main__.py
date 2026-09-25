@@ -90,16 +90,26 @@ def _process(
     try:
         if task.session_id and session_store is None:
             raise RuntimeError("session task received without a session store")
-        history = session_store.start_turn(task) if task.session_id and session_store else []
+        execution_name = os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME")
+        history = (
+            session_store.start_turn(task, execution_name)
+            if task.session_id and session_store else []
+        )
         status_store.write(
             task.task_id,
             repository=task.repository,
             owner_id=task.owner_id,
             state="running",
             attempt=message.dequeue_count,
+            execution_name=execution_name,
         )
-        result = pipeline.handle(task, history) if task.session_id else pipeline.handle(task)
+        result = (
+            pipeline.handle(task, history, before_push=lambda: session_store.ensure_turn_active(task))
+            if task.session_id and session_store else pipeline.handle(task)
+        )
         state = "no_changes" if not result.files_changed and not result.pushed else "completed"
+        if task.session_id and session_store:
+            session_store.complete_turn(task, result)
         status_store.write(
             task.task_id,
             repository=task.repository,
@@ -111,8 +121,6 @@ def _process(
             pull_request_url=result.pull_request_url,
             auto_merge_enabled=result.auto_merge_enabled,
         )
-        if task.session_id and session_store:
-            session_store.complete_turn(task, result)
     except TurnAlreadyCompleted:
         log.info("turn_already_completed", task_id=task.task_id, session_id=task.session_id)
         message.complete()
