@@ -167,6 +167,16 @@ def test_frontend_offers_persistent_theme_toggle():
     assert "themeToggle.addEventListener('click'" in html
 
 
+def test_frontend_shows_spinner_only_while_session_is_running():
+    html = TestClient(app).get("/").text
+    assert "@keyframes spin" in html
+    assert "prefers-reduced-motion: reduce" in html
+    assert "if (session.state === 'running')" in html
+    assert "spinner.className = 'run-spinner'" in html
+    assert "spinner.setAttribute('aria-hidden', 'true')" in html
+    assert "label.prepend(spinner)" in html
+
+
 def test_frontend_greets_signed_in_user_safely():
     client = TestClient(app)
     response = client.get("/", headers={

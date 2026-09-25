@@ -387,6 +387,11 @@ _INDEX_HTML = """<!doctype html>
     button:disabled { opacity: .55; cursor: wait; }
     #result { margin-top: 18px; padding: 12px; border-radius: 9px; background: var(--surface); display: none; }
     #chat { margin-top: 20px; display: grid; gap: 12px; }
+    .run-spinner { display: inline-block; width: .85em; height: .85em; margin-right: .4em;
+      border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
+      vertical-align: -.1em; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .run-spinner { animation: none; } }
     .message { white-space: pre-wrap; background: var(--surface); padding: 14px; border-radius: 9px; }
     .message.user { border-left: 3px solid var(--user-accent); }
     .message.assistant { border-left: 3px solid var(--assistant-accent); }
@@ -513,6 +518,12 @@ async function refreshSession() {
     (session.branch ? ` · ${session.branch}` : '') +
     (session.direct_to_main ? ' · direct to main' : '') +
     ` · Updated ${formatDate(session.updated_at)}`;
+  if (session.state === 'running') {
+    const spinner = document.createElement('span');
+    spinner.className = 'run-spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    label.prepend(spinner);
+  }
   sessionStatus.appendChild(label);
   if (session.pull_request_url?.startsWith('https://github.com/')) {
     const anchor = document.createElement('a');
