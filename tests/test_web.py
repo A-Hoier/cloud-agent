@@ -167,6 +167,13 @@ def test_frontend_offers_persistent_theme_toggle():
     assert "themeToggle.addEventListener('click'" in html
 
 
+def test_frontend_buttons_are_red_in_both_themes():
+    html = TestClient(app).get("/").text
+    assert "--button: #d32f2f; --button-text: #fff" in html
+    assert "--button: #b4232f; --button-text: #fff" in html
+    assert "background: var(--button); color: var(--button-text)" in html
+
+
 def test_frontend_shows_spinner_only_while_session_is_running():
     html = TestClient(app).get("/").text
     assert "@keyframes spin" in html

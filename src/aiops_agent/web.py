@@ -362,12 +362,12 @@ _INDEX_HTML = """<!doctype html>
     :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif;
       --page: #0b1020; --text: #e8edf8; --card: #131b31; --border: #263452;
       --muted: #aebbd3; --field-border: #3a4967; --surface: #0c1428;
-      --button: #6d7cff; --button-text: #fff; --user-accent: #6d7cff;
+      --button: #d32f2f; --button-text: #fff; --user-accent: #6d7cff;
       --assistant-accent: #3bbf9b; --code: #b9c2ff; }
     :root[data-theme="light"] { color-scheme: light;
       --page: #f3f6fc; --text: #1c2941; --card: #fff; --border: #c9d3e2;
       --muted: #42516a; --field-border: #8493aa; --surface: #eef2f9;
-      --button: #3449b5; --button-text: #fff; --user-accent: #3449b5;
+      --button: #b4232f; --button-text: #fff; --user-accent: #3449b5;
       --assistant-accent: #167c61; --code: #3449b5; }
     body { margin: 0; background: var(--page); color: var(--text); }
     main { max-width: 760px; margin: 8vh auto; padding: 0 24px; }
