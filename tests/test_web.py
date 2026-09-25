@@ -167,6 +167,25 @@ def test_frontend_offers_persistent_theme_toggle():
     assert "themeToggle.addEventListener('click'" in html
 
 
+def test_frontend_greets_signed_in_user_safely():
+    client = TestClient(app)
+    response = client.get("/", headers={
+        "x-ms-client-principal-id": "user-a",
+        "x-ms-client-principal-name": "Ada <script>alert(1)</script> & Co",
+    })
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-store"
+    assert '<p id="greeting">Welcome, Ada &lt;script&gt;alert(1)&lt;/script&gt; &amp; Co! ' in response.text
+    assert "<script>alert(1)</script>" not in response.text
+    assert '<p id="greeting">Welcome! Glad you\'re here.</p>' in client.get("/").text
+    assert '<p id="greeting">Welcome! Glad you\'re here.</p>' in client.get(
+        "/", headers={"x-ms-client-principal-id": "user-a"}
+    ).text
+    assert '<p id="greeting">Welcome! Glad you\'re here.</p>' in client.get(
+        "/", headers={"x-ms-client-principal-name": "Ada"}
+    ).text
+
+
 def test_frontend_lists_safe_repository_metadata():
     _configure_app()
     assert list_repositories("user-a") == [

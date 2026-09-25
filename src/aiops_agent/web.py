@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from html import escape
 from typing import Annotated
 from uuid import uuid4
 
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from azure.storage.queue import QueueClient
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -108,8 +109,14 @@ def main() -> None:
 
 
 @app.get("/", response_class=HTMLResponse)
-def index() -> str:
-    return _INDEX_HTML.replace("__DEFAULT_DIRECT_TO_MAIN__", str(
+def index(request: Request, response: Response) -> str:
+    response.headers["Cache-Control"] = "private, no-store"
+    owner = request.headers.get("x-ms-client-principal-id", "").strip()
+    name = request.headers.get("x-ms-client-principal-name", "").strip()
+    greeting = "Welcome!"
+    if owner and len(owner) <= 200 and 0 < len(name) <= 200:
+        greeting = f"Welcome, {escape(name)}!"
+    return _INDEX_HTML.replace("__GREETING__", greeting).replace("__DEFAULT_DIRECT_TO_MAIN__", str(
         getattr(app.state, "default_direct_to_main", False)
     ).lower())
 
@@ -387,6 +394,7 @@ _INDEX_HTML = """<!doctype html>
   </style>
 </head>
 <body><main><div class="card">
+  <p id="greeting">__GREETING__ Glad you're here.</p>
   <div class="header">
     <h1>Coding sessions</h1>
     <button id="theme-toggle" type="button">Switch to light theme</button>
